@@ -13,6 +13,8 @@
 #include <rclc/executor.h>
 
 #include <geometry_msgs/msg/twist.h>
+#include <sensor_msgs/msg/joint_state.h>
+#include <rosidl_runtime_c/string_functions.h>
 #include <math.h>
 
 #ifndef M_PI
@@ -32,6 +34,15 @@ uint16_t AGENT_PORT = 8888;                // micro-ROS agent port
 #define IN3 32   // Left  motor dir A
 #define IN4 33   // Left  motor dir B
 #define ENB 14   // Left  motor PWM
+
+// =================== Encoder pins =================================
+#define ENC_RIGHT_A  18  // Right encoder channel A
+#define ENC_RIGHT_B  19  // Right encoder channel B
+#define ENC_LEFT_A   21  // Left encoder channel A
+#define ENC_LEFT_B   22  // Left encoder channel B
+
+// Encoder specs (adjust for your TT motor: typically 11 PPR * gear_ratio)
+static const int32_t TICKS_PER_REV = 528;  // 11 PPR * 48:1 gearbox
 
 // Software direction flips (toggle if a wheel turns the wrong way)
 static const bool LEFT_DIR_INVERT  = true;
@@ -70,8 +81,10 @@ rcl_allocator_t allocator;
 rclc_support_t support;
 rcl_node_t node;
 rcl_subscription_t cmd_sub;
+rcl_publisher_t joint_state_pub;
 rclc_executor_t executor;
 geometry_msgs__msg__Twist cmd_msg;
+sensor_msgs__msg__JointState joint_state_msg;
 
 // =================== State ====================================
 volatile float v_left_ms  = 0.0f;
@@ -79,9 +92,32 @@ volatile float v_right_ms = 0.0f;
 bool spin_mode = false;
 uint32_t last_cmd_ms = 0;
 
+// Encoder state
+volatile int32_t enc_left_ticks  = 0;
+volatile int32_t enc_right_ticks = 0;
+uint32_t last_encoder_pub_ms = 0;
+static const uint32_t ENCODER_PUB_INTERVAL_MS = 50; // 20 Hz
+
 // ↓ Small smoothing so spins are more delicate
 float vL_filt = 0.0f, vR_filt = 0.0f;
 static const float ALPHA = 0.25f;  // 0..1 (lower = smoother)
+
+// =================== Encoder ISRs =============================
+void IRAM_ATTR enc_right_isr() {
+  if (digitalRead(ENC_RIGHT_B) == digitalRead(ENC_RIGHT_A)) {
+    enc_right_ticks++;
+  } else {
+    enc_right_ticks--;
+  }
+}
+
+void IRAM_ATTR enc_left_isr() {
+  if (digitalRead(ENC_LEFT_B) == digitalRead(ENC_LEFT_A)) {
+    enc_left_ticks++;
+  } else {
+    enc_left_ticks--;
+  }
+}
 
 // =================== Helpers ==================================
 static bool connectWiFi(unsigned long timeout_ms = 30000) {
@@ -189,6 +225,16 @@ void setup() {
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
 
+  // Encoder pins
+  pinMode(ENC_RIGHT_A, INPUT_PULLUP);
+  pinMode(ENC_RIGHT_B, INPUT_PULLUP);
+  pinMode(ENC_LEFT_A, INPUT_PULLUP);
+  pinMode(ENC_LEFT_B, INPUT_PULLUP);
+  
+  // Attach interrupts for encoders
+  attachInterrupt(digitalPinToInterrupt(ENC_RIGHT_A), enc_right_isr, RISING);
+  attachInterrupt(digitalPinToInterrupt(ENC_LEFT_A), enc_left_isr, RISING);
+
   // PWM setup (LEDC)
   ledcSetup(PWM_CH_RIGHT, PWM_FREQ, PWM_RES);
   ledcAttachPin(ENA, PWM_CH_RIGHT);
@@ -221,16 +267,64 @@ void setup() {
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
     "/cmd_vel");
 
+  // Initialize joint_state publisher
+  sensor_msgs__msg__JointState__init(&joint_state_msg);
+  
+  // Allocate arrays for 2 joints
+  joint_state_msg.name.capacity = 2;
+  joint_state_msg.name.size = 2;
+  joint_state_msg.name.data = (rosidl_runtime_c__String*)malloc(2 * sizeof(rosidl_runtime_c__String));
+  rosidl_runtime_c__String__init(&joint_state_msg.name.data[0]);
+  rosidl_runtime_c__String__init(&joint_state_msg.name.data[1]);
+  rosidl_runtime_c__String__assign(&joint_state_msg.name.data[0], "left_wheel_joint");
+  rosidl_runtime_c__String__assign(&joint_state_msg.name.data[1], "right_wheel_joint");
+  
+  joint_state_msg.position.capacity = 2;
+  joint_state_msg.position.size = 2;
+  joint_state_msg.position.data = (double*)malloc(2 * sizeof(double));
+  
+  joint_state_msg.velocity.capacity = 2;
+  joint_state_msg.velocity.size = 2;
+  joint_state_msg.velocity.data = (double*)malloc(2 * sizeof(double));
+  
+  joint_state_msg.effort.capacity = 0;
+  joint_state_msg.effort.size = 0;
+  joint_state_msg.effort.data = NULL;
+  
+  rclc_publisher_init_default(
+    &joint_state_pub, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, JointState),
+    "/joint_states");
+
   rclc_executor_init(&executor, &support.context, 1, &allocator);
   rclc_executor_add_subscription(&executor, &cmd_sub, &cmd_msg, &cmd_vel_cb, ON_NEW_DATA);
 
   last_cmd_ms = millis();
-  Serial.println("[Setup] Ready: sub /cmd_vel");
+  last_encoder_pub_ms = millis();
+  Serial.println("[Setup] Ready: sub /cmd_vel, pub /joint_states");
 }
 
 void loop() {
   // Process incoming ROS messages
   rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
+
+  // Publish joint states at regular intervals
+  if (millis() - last_encoder_pub_ms >= ENCODER_PUB_INTERVAL_MS) {
+    // Convert ticks to radians
+    joint_state_msg.position.data[0] = (double)enc_left_ticks * 2.0 * M_PI / TICKS_PER_REV;
+    joint_state_msg.position.data[1] = (double)enc_right_ticks * 2.0 * M_PI / TICKS_PER_REV;
+    
+    // Velocity (could calculate from position change, set to 0 for now)
+    joint_state_msg.velocity.data[0] = 0.0;
+    joint_state_msg.velocity.data[1] = 0.0;
+    
+    // Timestamp
+    joint_state_msg.header.stamp.sec = millis() / 1000;
+    joint_state_msg.header.stamp.nanosec = (millis() % 1000) * 1000000;
+    
+    rcl_publish(&joint_state_pub, &joint_state_msg, NULL);
+    last_encoder_pub_ms = millis();
+  }
 
   // Safety: stop if cmd stream goes stale
   if (millis() - last_cmd_ms > CMD_TIMEOUT_MS) {

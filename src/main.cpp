@@ -22,10 +22,8 @@
 #endif
 
 // =================== Wi-Fi + micro-ROS agent ===================
-static char WIFI_SSID[] = "WIFI";          // your Wi-Fi SSID (mutable char[])
-static char WIFI_PSK[]  = "100200300";     // your Wi-Fi password (mutable char[])
-IPAddress AGENT_IP(192,168,1,245);         // micro-ROS agent IP
-uint16_t AGENT_PORT = 8888;                // micro-ROS agent port
+// Copy include/wifi_config.h.example → include/wifi_config.h and fill in your values
+#include "wifi_config.h"
 
 // =================== Motor pins (your wiring) ==================
 #define ENA 25   // Right motor PWM

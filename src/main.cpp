@@ -42,8 +42,8 @@
 #define ENC_LEFT_B   22  // Left encoder channel B
 
 // =================== IMU (MPU6050) pins & config ==================
-#define IMU_SDA      16  // I2C SDA (custom, default 21 used by encoder)
-#define IMU_SCL      17  // I2C SCL (custom, default 22 used by encoder)
+#define IMU_SDA      13  // I2C SDA (custom, default 21 used by encoder)
+#define IMU_SCL      15  // I2C SCL (custom, default 22 used by encoder)
 #define MPU6050_ADDR 0x68
 // MPU6050 register addresses
 #define MPU6050_REG_PWR_MGMT_1   0x6B
@@ -400,7 +400,7 @@ void setup() {
   // Initialize MPU6050
   imu_initialized = mpu6050_init();
   if (imu_initialized) {
-    Serial.println("[IMU] MPU6050 initialized on I2C (GPIO 16/17)");
+    Serial.println("[IMU] MPU6050 initialized on I2C (GPIO 13/15)");
   } else {
     Serial.println("[IMU] MPU6050 init FAILED - check wiring");
   }

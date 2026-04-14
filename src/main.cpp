@@ -14,7 +14,9 @@
 
 #include <geometry_msgs/msg/twist.h>
 #include <sensor_msgs/msg/joint_state.h>
+#include <sensor_msgs/msg/imu.h>
 #include <rosidl_runtime_c/string_functions.h>
+#include <Wire.h>
 #include <math.h>
 
 #ifndef M_PI
@@ -38,6 +40,21 @@
 #define ENC_RIGHT_B  19  // Right encoder channel B
 #define ENC_LEFT_A   21  // Left encoder channel A
 #define ENC_LEFT_B   22  // Left encoder channel B
+
+// =================== IMU (MPU6050) pins & config ==================
+#define IMU_SDA      16  // I2C SDA (custom, default 21 used by encoder)
+#define IMU_SCL      17  // I2C SCL (custom, default 22 used by encoder)
+#define MPU6050_ADDR 0x68
+// MPU6050 register addresses
+#define MPU6050_REG_PWR_MGMT_1   0x6B
+#define MPU6050_REG_ACCEL_CONFIG  0x1C
+#define MPU6050_REG_GYRO_CONFIG   0x1B
+#define MPU6050_REG_ACCEL_XOUT_H  0x3B
+// Conversion factors
+// Accel: ±2g range → 16384 LSB/g → multiply by 9.80665/16384
+static const float ACCEL_SCALE = 9.80665f / 16384.0f;
+// Gyro: ±250 deg/s range → 131 LSB/(deg/s) → multiply by (PI/180)/131
+static const float GYRO_SCALE  = (M_PI / 180.0f) / 131.0f;
 
 // Encoder specs (adjust for your TT motor: typically 11 PPR * gear_ratio)
 static const int32_t TICKS_PER_REV = 528;  // 11 PPR * 48:1 gearbox
@@ -80,9 +97,11 @@ rclc_support_t support;
 rcl_node_t node;
 rcl_subscription_t cmd_sub;
 rcl_publisher_t joint_state_pub;
+rcl_publisher_t imu_pub;
 rclc_executor_t executor;
 geometry_msgs__msg__Twist cmd_msg;
 sensor_msgs__msg__JointState joint_state_msg;
+sensor_msgs__msg__Imu imu_msg;
 
 // =================== State ====================================
 volatile float v_left_ms  = 0.0f;
@@ -95,6 +114,11 @@ volatile int32_t enc_left_ticks  = 0;
 volatile int32_t enc_right_ticks = 0;
 uint32_t last_encoder_pub_ms = 0;
 static const uint32_t ENCODER_PUB_INTERVAL_MS = 50; // 20 Hz
+
+// IMU state
+uint32_t last_imu_pub_ms = 0;
+static const uint32_t IMU_PUB_INTERVAL_MS = 20; // 50 Hz
+bool imu_initialized = false;
 
 // ↓ Small smoothing so spins are more delicate
 float vL_filt = 0.0f, vR_filt = 0.0f;
@@ -115,6 +139,61 @@ void IRAM_ATTR enc_left_isr() {
   } else {
     enc_left_ticks--;
   }
+}
+
+// =================== MPU6050 helpers ============================
+static void mpu6050_write_reg(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(reg);
+  Wire.write(val);
+  Wire.endTransmission();
+}
+
+static bool mpu6050_init() {
+  Wire.begin(IMU_SDA, IMU_SCL);
+  Wire.setClock(400000);  // 400 kHz fast I2C
+
+  // Wake up MPU6050 (clear sleep bit), use gyro X as clock source
+  mpu6050_write_reg(MPU6050_REG_PWR_MGMT_1, 0x01);
+  delay(100);
+
+  // Verify connection by reading WHO_AM_I (register 0x75, should return 0x68)
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x75);
+  Wire.endTransmission(false);
+  Wire.requestFrom((uint8_t)MPU6050_ADDR, (uint8_t)1);
+  if (!Wire.available()) return false;
+  uint8_t who = Wire.read();
+  if (who != 0x68) return false;
+
+  // Accel range ±2g (default), Gyro range ±250 deg/s (default)
+  mpu6050_write_reg(MPU6050_REG_ACCEL_CONFIG, 0x00);
+  mpu6050_write_reg(MPU6050_REG_GYRO_CONFIG, 0x00);
+
+  return true;
+}
+
+static void mpu6050_read(float *ax, float *ay, float *az,
+                         float *gx, float *gy, float *gz) {
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(MPU6050_REG_ACCEL_XOUT_H);
+  Wire.endTransmission(false);
+  Wire.requestFrom((uint8_t)MPU6050_ADDR, (uint8_t)14, (uint8_t)true);
+
+  int16_t raw_ax = (Wire.read() << 8) | Wire.read();
+  int16_t raw_ay = (Wire.read() << 8) | Wire.read();
+  int16_t raw_az = (Wire.read() << 8) | Wire.read();
+  Wire.read(); Wire.read();  // skip temperature
+  int16_t raw_gx = (Wire.read() << 8) | Wire.read();
+  int16_t raw_gy = (Wire.read() << 8) | Wire.read();
+  int16_t raw_gz = (Wire.read() << 8) | Wire.read();
+
+  *ax = raw_ax * ACCEL_SCALE;
+  *ay = raw_ay * ACCEL_SCALE;
+  *az = raw_az * ACCEL_SCALE;
+  *gx = raw_gx * GYRO_SCALE;
+  *gy = raw_gy * GYRO_SCALE;
+  *gz = raw_gz * GYRO_SCALE;
 }
 
 // =================== Helpers ==================================
@@ -294,12 +373,45 @@ void setup() {
     ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, JointState),
     "/joint_states");
 
+  // Initialize IMU publisher
+  sensor_msgs__msg__Imu__init(&imu_msg);
+  imu_msg.header.frame_id.data = (char*)"imu_link";
+  imu_msg.header.frame_id.size = strlen("imu_link");
+  imu_msg.header.frame_id.capacity = imu_msg.header.frame_id.size + 1;
+  // Set orientation covariance to -1 (orientation not provided)
+  imu_msg.orientation_covariance[0] = -1.0;
+  // Set linear acceleration and angular velocity covariances (diagonal)
+  for (int i = 0; i < 9; i++) {
+    imu_msg.linear_acceleration_covariance[i] = 0.0;
+    imu_msg.angular_velocity_covariance[i] = 0.0;
+  }
+  imu_msg.linear_acceleration_covariance[0] = 0.01;
+  imu_msg.linear_acceleration_covariance[4] = 0.01;
+  imu_msg.linear_acceleration_covariance[8] = 0.01;
+  imu_msg.angular_velocity_covariance[0] = 0.001;
+  imu_msg.angular_velocity_covariance[4] = 0.001;
+  imu_msg.angular_velocity_covariance[8] = 0.001;
+
+  rclc_publisher_init_default(
+    &imu_pub, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
+    "/imu");
+
+  // Initialize MPU6050
+  imu_initialized = mpu6050_init();
+  if (imu_initialized) {
+    Serial.println("[IMU] MPU6050 initialized on I2C (GPIO 16/17)");
+  } else {
+    Serial.println("[IMU] MPU6050 init FAILED - check wiring");
+  }
+
   rclc_executor_init(&executor, &support.context, 1, &allocator);
   rclc_executor_add_subscription(&executor, &cmd_sub, &cmd_msg, &cmd_vel_cb, ON_NEW_DATA);
 
   last_cmd_ms = millis();
   last_encoder_pub_ms = millis();
-  Serial.println("[Setup] Ready: sub /cmd_vel, pub /joint_states");
+  last_imu_pub_ms = millis();
+  Serial.println("[Setup] Ready: sub /cmd_vel, pub /joint_states, pub /imu");
 }
 
 void loop() {
@@ -322,6 +434,31 @@ void loop() {
     
     rcl_publish(&joint_state_pub, &joint_state_msg, NULL);
     last_encoder_pub_ms = millis();
+  }
+
+  // Publish IMU data at 50 Hz
+  if (imu_initialized && millis() - last_imu_pub_ms >= IMU_PUB_INTERVAL_MS) {
+    float ax, ay, az, gx, gy, gz;
+    mpu6050_read(&ax, &ay, &az, &gx, &gy, &gz);
+
+    imu_msg.linear_acceleration.x = ax;
+    imu_msg.linear_acceleration.y = ay;
+    imu_msg.linear_acceleration.z = az;
+    imu_msg.angular_velocity.x = gx;
+    imu_msg.angular_velocity.y = gy;
+    imu_msg.angular_velocity.z = gz;
+
+    // No orientation estimate from raw MPU6050
+    imu_msg.orientation.x = 0.0;
+    imu_msg.orientation.y = 0.0;
+    imu_msg.orientation.z = 0.0;
+    imu_msg.orientation.w = 0.0;
+
+    imu_msg.header.stamp.sec = millis() / 1000;
+    imu_msg.header.stamp.nanosec = (millis() % 1000) * 1000000;
+
+    rcl_publish(&imu_pub, &imu_msg, NULL);
+    last_imu_pub_ms = millis();
   }
 
   // Safety: stop if cmd stream goes stale

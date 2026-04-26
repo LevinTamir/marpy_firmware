@@ -20,12 +20,12 @@ Full setup and flashing instructions are in the main repo:
 
 ## Code layout
 
-| File | Concern |
+| File | Description |
 |------|---------|
-| `pins.h`           | central GPIO map |
+| `pins.h`           | GPIO config |
 | `motor_config.h`   | PID gain defaults |
 | `pid.{h,cpp}`      | generic PID controller |
-| `motors.{h,cpp}`   | PWM, encoders, FF + PID, kinematics |
+| `motors.{h,cpp}`   | PWM, encoders, kinematics |
 | `imu.{h,cpp}`      | MPU6050 driver |
 | `microros.{h,cpp}` | Wi-Fi, pubs/subs, callbacks |
 | `main.cpp`         | `setup()` + `loop()` orchestration |

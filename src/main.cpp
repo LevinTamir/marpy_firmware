@@ -216,7 +216,7 @@ static void waitForAgent() {
 }
 
 // Fill a builtin_interfaces/Time from synced ROS epoch.
-// Falls back to millis()-since-boot if the agent hasn't synced yet — without
+// Falls back to millis()-since-boot if the agent hasn't synced yet. Without
 // sync, robot_state_publisher would re-broadcast wheel TFs at boot-relative
 // stamps, causing /tf chains rooted at /odom to render the wheels stuck at
 // the world origin.

@@ -1,4 +1,3 @@
-// MPU6050 driver. See imu.h.
 #include "imu.h"
 
 #include <Arduino.h>

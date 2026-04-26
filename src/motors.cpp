@@ -46,7 +46,7 @@ static const float SPIN_FLOOR_MS  = 0.08f;   // smallest per-wheel speed during 
 // teleop_twist_keyboard defaults to 0.5 m/s; LIN_GAIN 0.4 -> ~0.2 m/s target.
 static const float LIN_GAIN  =  0.4f;
 static const float WZ_SIGN   = -1.0f;   // flip angular direction
-static const float WZ_GAIN   =  1.5f;   // smaller = slower spin (was 3.0)
+static const float WZ_GAIN   =  2.0f;   // smaller = slower spin; below ~1.8 the duty drops under the floor needed to rotate the robot on the floor
 
 static const uint32_t CMD_TIMEOUT_MS = 500;  // brake if cmd stream stale
 

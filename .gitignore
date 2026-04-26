@@ -1,5 +1,6 @@
 .pio/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 .claude/
 
 # Private network config (contains WiFi credentials)

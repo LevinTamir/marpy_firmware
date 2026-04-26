@@ -1,12 +1,11 @@
 # MARPY Firmware
 
-ESP32 micro-ROS firmware for the [MARPY](https://github.com/LevinTamir/MARPY) differential-drive robot.
-
-Subscribes to `/cmd_vel` and publishes `/joint_states` and `/imu` over Wi-Fi UDP, with deadzone-compensated open-loop FF and an opt-in per-wheel velocity PID.
+Micro-ROS firmware for the [MARPY](https://github.com/LevinTamir/MARPY) project.
+Subscribes to `/cmd_vel` and publishes `/joint_states` and `/imu` over Wi-Fi.
 
 ## Getting started
 
-Full setup and flashing instructions live in the main repo:
+Full setup and flashing instructions are in the main repo:
 
 **[MARPY - Firmware Setup Guide](https://github.com/LevinTamir/MARPY/blob/main/docs/firmware-setup.md)**
 

@@ -18,6 +18,7 @@
 #include "wifi_config.h"
 #include "motors.h"
 
+// =================== Handles ==========================
 static rcl_allocator_t allocator;
 static rclc_support_t  support;
 static rcl_node_t      node;
@@ -33,6 +34,7 @@ static std_msgs__msg__Float32MultiArray      pid_gains_msg;
 static sensor_msgs__msg__JointState          joint_state_msg;
 static sensor_msgs__msg__Imu                 imu_msg;
 
+// =================== WiFi =============================
 static bool connect_wifi(unsigned long timeout_ms = 30000) {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PSK);
@@ -50,6 +52,7 @@ static void wait_for_agent() {
   }
 }
 
+// =================== Time stamping ====================
 // Fall back to millis() if the agent hasn't synced yet. Without sync,
 // robot_state_publisher rebroadcasts wheel TFs at boot-relative stamps and
 // RViz pins the wheels at the world origin when the fixed frame is /odom.
@@ -65,6 +68,7 @@ static void stamp_now(builtin_interfaces__msg__Time *out) {
   }
 }
 
+// =================== Callbacks ========================
 static void cmd_vel_cb(const void *msgin) {
   const auto *m = (const geometry_msgs__msg__Twist *)msgin;
   motors_apply_cmd_vel((float)m->linear.x, (float)m->angular.z);
@@ -80,6 +84,7 @@ static void pid_gains_cb(const void *msgin) {
   Serial.printf("[PID] gains updated: Kp=%.2f Ki=%.2f Kd=%.2f\n", kp, ki, kd);
 }
 
+// =================== Message init =====================
 static void init_joint_state_msg() {
   sensor_msgs__msg__JointState__init(&joint_state_msg);
 
@@ -131,6 +136,7 @@ static void init_pid_gains_msg() {
   pid_gains_msg.data.data     = (float *)malloc(8 * sizeof(float));
 }
 
+// =================== Public API =======================
 bool microros_setup() {
   if (!connect_wifi()) {
     Serial.println("[WiFi] connect failed");

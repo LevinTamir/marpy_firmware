@@ -8,9 +8,10 @@
 // like, copy them into the defaults below.
 #pragma once
 
-// Per-wheel velocity PID. Disabled by default (zeros) so the firmware
-// runs pure open-loop FF. Suggested live-tune starting point: 200, 100, 0.
-// Kd usually stays at 0 (encoder-derived velocity is too noisy for it).
+// =================== Per-wheel PID ====================
+// Disabled by default (zeros) so the firmware runs pure open-loop FF.
+// Suggested live-tune starting point: 200, 100, 0. Kd usually stays at 0
+// (encoder-derived velocity is too noisy for it).
 #define DEFAULT_PID_KP                   0.0f
 #define DEFAULT_PID_KI                   0.0f
 #define DEFAULT_PID_KD                   0.0f
@@ -18,5 +19,6 @@
 // past stiction when the FF underestimates.
 #define DEFAULT_PID_INTEGRAL_MAX_DUTY  150.0f
 
-// Velocity sample rate for PID feedback (decoupled from main-loop jitter).
+// =================== Velocity estimate ================
+// Sample rate for PID feedback (decoupled from main-loop jitter).
 #define VEL_UPDATE_INTERVAL_MS  20   // 50 Hz

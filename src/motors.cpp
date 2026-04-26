@@ -11,7 +11,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// Encoder + PWM
+// =================== Encoder + PWM ====================
 static const int32_t TICKS_PER_REV = 528;     // 11 PPR * 48:1 gearbox, 1x decoding
 static const bool LEFT_DIR_INVERT  = true;
 static const bool RIGHT_DIR_INVERT = true;
@@ -21,14 +21,15 @@ static const int PWM_CH_LEFT  = 1;
 static const int PWM_FREQ     = 20000;        // 20 kHz, inaudible
 static const int PWM_RES      = 8;
 
-// Duty floors. MIN_DUTY_SPIN keeps an already-rotating robot moving;
-// SPIN_KICKSTART_DUTY is briefly applied to break stiction at the start.
+// =================== Duty floors ======================
+// MIN_DUTY_SPIN keeps an already-rotating robot moving; SPIN_KICKSTART_DUTY
+// is briefly applied to break stiction at the start of a fresh spin.
 static const uint8_t  MIN_DUTY            = 30;
 static const uint8_t  MIN_DUTY_SPIN       = 130;
 static const uint8_t  SPIN_KICKSTART_DUTY = 200;
 static const uint32_t SPIN_KICKSTART_MS   = 200;
 
-// Kinematics
+// =================== Kinematics =======================
 static const float BASE_WIDTH_M   = 0.12f;
 static const float WHEEL_RADIUS_M = 0.033f;
 static const float MAX_RPM        = 70.0f;
@@ -45,7 +46,7 @@ static const float WZ_GAIN   =  2.0f;
 static const uint32_t CMD_TIMEOUT_MS = 500;
 static const float MOTOR_TAU_SEC = 0.10f;     // EMA on the wheel target
 
-// State
+// =================== State ============================
 static volatile float v_left_cmd  = 0.0f;
 static volatile float v_right_cmd = 0.0f;
 static volatile bool  spin_mode   = false;
@@ -67,9 +68,10 @@ static uint32_t last_vel_update_ms = 0;
 
 static PID pid_left, pid_right;
 
+// =================== Encoder ISRs =====================
 // The two encoders are physically mirrored across the chassis but wired the
-// same way, so one of them counts opposite to the URDF "+forward" convention.
-// Flipping the left wheel here keeps published position, velocity, and PID
+// same way, so one counts opposite to the URDF "+forward" convention.
+// Flipping the left wheel keeps published position, velocity, and PID
 // feedback all consistently signed.
 void IRAM_ATTR enc_left_isr() {
   if (digitalRead(ENC_LEFT_B) == digitalRead(ENC_LEFT_A)) enc_left_ticks--;
@@ -80,6 +82,7 @@ void IRAM_ATTR enc_right_isr() {
   else                                                      enc_right_ticks--;
 }
 
+// =================== Motor drive ======================
 // Deadzone-compensated linear FF: zero target -> zero duty, otherwise map
 // onto [min_duty, 255] proportionally so any nonzero command immediately
 // produces a duty large enough to overcome stiction.
@@ -117,6 +120,7 @@ static void stop_motors() {
   ledcWrite(PWM_CH_RIGHT, 0);
 }
 
+// =================== Velocity estimate ================
 // Sampled at fixed rate so PID feedback isn't sensitive to main-loop jitter.
 static void update_wheel_velocities() {
   uint32_t now_us = micros();
@@ -139,6 +143,7 @@ static void update_wheel_velocities() {
   last_vel_us = now_us;
 }
 
+// =================== Public API =======================
 void motors_setup() {
   pinMode(MOTOR_IN1, OUTPUT);
   pinMode(MOTOR_IN2, OUTPUT);

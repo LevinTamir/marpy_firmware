@@ -11,6 +11,7 @@
 #include <rcl/rcl.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
+#include <rmw_microros/rmw_microros.h>
 
 #include <geometry_msgs/msg/twist.h>
 #include <sensor_msgs/msg/joint_state.h>
@@ -214,6 +215,23 @@ static void waitForAgent() {
   }
 }
 
+// Fill a builtin_interfaces/Time from synced ROS epoch.
+// Falls back to millis()-since-boot if the agent hasn't synced yet — without
+// sync, robot_state_publisher would re-broadcast wheel TFs at boot-relative
+// stamps, causing /tf chains rooted at /odom to render the wheels stuck at
+// the world origin.
+static void stamp_now(builtin_interfaces__msg__Time *out) {
+  int64_t ns = rmw_uros_epoch_nanos();
+  if (ns > 0) {
+    out->sec = (int32_t)(ns / 1000000000LL);
+    out->nanosec = (uint32_t)(ns % 1000000000LL);
+  } else {
+    uint32_t ms = millis();
+    out->sec = (int32_t)(ms / 1000U);
+    out->nanosec = (uint32_t)((ms % 1000U) * 1000000U);
+  }
+}
+
 static inline uint8_t duty_from_speed(float v_ms, bool is_spin) {
   float m = fabsf(v_ms) / MAX_WHEEL_MS;
   if (m > 1.0f) m = 1.0f;
@@ -338,6 +356,16 @@ void setup() {
   rclc_support_init(&support, 0, NULL, &allocator);
   rclc_node_init_default(&node, "esp32_diffdrive_node", "", &support);
 
+  // Sync ESP32 clock with the agent so /joint_states and /imu carry valid
+  // ROS epoch stamps. robot_state_publisher uses these stamps when re-
+  // broadcasting wheel TFs; without sync, the wheels render at the world
+  // origin in RViz when the fixed frame is /odom.
+  if (rmw_uros_sync_session(1000) == RMW_RET_OK) {
+    Serial.println("[micro-ROS] time synced with agent");
+  } else {
+    Serial.println("[micro-ROS] time sync FAILED (will retry in loop)");
+  }
+
   geometry_msgs__msg__Twist__init(&cmd_msg);
   rclc_subscription_init_default(
     &cmd_sub, &node,
@@ -428,10 +456,8 @@ void loop() {
     joint_state_msg.velocity.data[0] = 0.0;
     joint_state_msg.velocity.data[1] = 0.0;
     
-    // Timestamp
-    joint_state_msg.header.stamp.sec = millis() / 1000;
-    joint_state_msg.header.stamp.nanosec = (millis() % 1000) * 1000000;
-    
+    stamp_now(&joint_state_msg.header.stamp);
+
     rcl_publish(&joint_state_pub, &joint_state_msg, NULL);
     last_encoder_pub_ms = millis();
   }
@@ -454,8 +480,7 @@ void loop() {
     imu_msg.orientation.z = 0.0;
     imu_msg.orientation.w = 0.0;
 
-    imu_msg.header.stamp.sec = millis() / 1000;
-    imu_msg.header.stamp.nanosec = (millis() % 1000) * 1000000;
+    stamp_now(&imu_msg.header.stamp);
 
     rcl_publish(&imu_pub, &imu_msg, NULL);
     last_imu_pub_ms = millis();

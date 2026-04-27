@@ -25,10 +25,10 @@ The end-to-end setup guide (Wi-Fi config, agent setup on the PC, ROS2 launch) li
 
 ## VS Code env var
 
-`.vscode/settings.json` references `${env:MARPY_WS}` for the ROS2 workspace install path. Export it once in your shell rc (or VS Code launch env) so the Python analysis paths resolve:
+`.vscode/settings.json` references `${env:MARPY_WS}` for the ROS2 workspace install path. Point it at wherever you cloned the [MARPY workspace](https://github.com/LevinTamir/MARPY) and export it from your shell rc so the Python analysis paths resolve:
 
 ```bash
-export MARPY_WS=$HOME/workspaces/marpy_ws
+export MARPY_WS=/path/to/your/marpy_ws
 ```
 
 ## License

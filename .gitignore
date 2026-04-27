@@ -3,6 +3,7 @@
 !.vscode/extensions.json
 !.vscode/settings.json
 .claude/
+compile_commands.json
 
 # Private network config (contains WiFi credentials)
 base/include/wifi_config.h

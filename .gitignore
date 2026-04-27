@@ -4,4 +4,5 @@
 .claude/
 
 # Private network config (contains WiFi credentials)
-include/wifi_config.h
+base/include/wifi_config.h
+cam/include/wifi_config.h

@@ -1,0 +1,14 @@
+#pragma once
+
+// =================== Wi-Fi + micro-ROS agent ===================
+// 1. Copy this file:  cp include/wifi_config.h.example include/wifi_config.h
+// 2. Fill in your values below
+// 3. wifi_config.h is git-ignored, your credentials stay local
+//
+// Use the same SSID/PSK/agent IP as base/include/wifi_config.h. The cam
+// connects to the same micro-ROS agent the base firmware uses.
+
+static char WIFI_SSID[] = "YOUR_WIFI_SSID";        // your Wi-Fi network name
+static char WIFI_PSK[]  = "YOUR_WIFI_PASSWORD";     // your Wi-Fi password
+IPAddress AGENT_IP(192, 168, 1, 100);               // your PC's IP address
+uint16_t AGENT_PORT = 8888;                         // micro-ROS agent port

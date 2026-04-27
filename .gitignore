@@ -1,7 +1,7 @@
 .pio/
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
+**/.vscode/*
+!**/.vscode/extensions.json
+!**/.vscode/settings.json
 .claude/
 compile_commands.json
 

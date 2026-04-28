@@ -1,14 +1,19 @@
 # MARPY Cam Firmware
 
-ESP32-CAM (AI-Thinker, OV2640) vision firmware for the [MARPY](https://github.com/LevinTamir/MARPY) project. Streams JPEG frames over micro-ROS to the same agent the base firmware uses.
+ESP32-CAM (AI-Thinker, OV2640) vision firmware for the [MARPY](https://github.com/LevinTamir/MARPY) project. Serves an MJPEG stream over plain HTTP. A ROS 2 bridge node on the workstation (`marpy_cam_bridge` in [marpy_ws](https://github.com/LevinTamir/MARPY)) pulls the stream and republishes it as `sensor_msgs/Image`.
 
-## Topic
+micro-ROS was the first attempt and ran into the well-known `WiFiUdp endPacket: 12` (EMSGSIZE) wall: image-sized payloads do not survive the ESP32 WiFiUDP stack, regardless of MTU tuning. HTTP MJPEG is the standard escape hatch for ESP32-CAM and what the rest of this firmware is built around.
 
-| Topic | Type | QoS | Direction |
-|-------|------|-----|-----------|
-| `/camera/image_compressed` | `sensor_msgs/CompressedImage` | best-effort | ESP32-CAM -> PC |
+## Endpoint
 
-`format = "jpeg"`, `header.frame_id = "camera_optical_frame"`. Node name is `marpy_cam` (the base firmware uses `marpy`, so both can connect to the same agent at `192.168.1.10:8888`).
+| URL | Content |
+|-----|---------|
+| `http://marpy-cam.local/`           | tiny landing page (port 80) |
+| `http://marpy-cam.local:81/stream`  | `multipart/x-mixed-replace` MJPEG stream (port 81) |
+
+The stream lives on a separate port so its long-lived connection doesn't starve the index page handler (this is the same split the official Espressif `CameraWebServer` example uses).
+
+mDNS name is `marpy-cam`. If your network does not resolve `.local`, use the IP printed on the serial console at boot.
 
 ## Hardware
 
@@ -21,12 +26,11 @@ ESP32-CAM (AI-Thinker, OV2640) vision firmware for the [MARPY](https://github.co
 |------|-------------|
 | `include/camera_pins.h`   | AI-Thinker OV2640 pin map |
 | `include/camera.h`        | esp32-camera wrapper API |
-| `include/microros_cam.h`  | Wi-Fi + publisher API |
-| `include/wifi_config.h`   | Wi-Fi + agent config (gitignored, copy from `.example`) |
+| `include/http_server.h`   | Wi-Fi + mDNS + HTTP server API |
+| `include/wifi_config.h`   | Wi-Fi credentials (gitignored, copy from `.example`) |
 | `src/camera.cpp`          | sensor init, frame grab/release |
-| `src/microros_cam.cpp`    | Wi-Fi, transport, publisher, executor |
+| `src/http_server.cpp`     | Wi-Fi connect, mDNS, `esp_http_server` MJPEG handler |
 | `src/main.cpp`            | `setup()` + `loop()` orchestration |
-| `colcon.meta`             | micro-ROS XRCE-DDS sizing overrides (bigger MTU, longer output stream history) |
 
 ## Configure Wi-Fi
 
@@ -34,7 +38,7 @@ ESP32-CAM (AI-Thinker, OV2640) vision firmware for the [MARPY](https://github.co
 cp include/wifi_config.h.example include/wifi_config.h
 ```
 
-Edit it with the same SSID, password, and agent IP you used for the base firmware. `wifi_config.h` is gitignored.
+Fill in your SSID and password. `wifi_config.h` is gitignored. There is no agent IP or port to set: the cam just needs the network.
 
 ## Build and flash
 
@@ -44,47 +48,51 @@ pio run -d cam -t upload     # build + flash
 pio device monitor -d cam    # serial console
 ```
 
-Or in VS Code with the PlatformIO extension: pick `cam` in the PROJECT TASKS sidebar and use its Build / Upload / Monitor buttons.
+In VS Code with the PlatformIO extension, pick `cam` in the PROJECT TASKS sidebar and use Build / Upload / Monitor.
 
 The MB shield handles boot/reset, no GPIO0 jumper or BOOT button mash needed.
 
 ## Verify
 
-With the agent running on the PC:
+Open `http://marpy-cam.local:81/stream` in any browser. You should see a live video feed. That confirms the cam is working independently of ROS.
+
+For the ROS path, in [marpy_ws](https://github.com/LevinTamir/MARPY) launch `real.launch.py` (or run the bridge directly):
 
 ```bash
-ros2 topic list                                           # /camera/image_compressed should appear
-ros2 topic hz /camera/image_compressed                    # measure FPS
+ros2 run marpy_cam_bridge mjpeg_bridge --ros-args -p stream_url:=http://marpy-cam.local:81/stream
+ros2 topic hz /camera/image_raw
 ```
 
-In RViz: add an `Image` display, set the topic to `/camera/image_compressed`, set the transport to `compressed`.
+In RViz: add an `Image` display and set the topic to `/camera/image_raw`. No image_transport plugins required.
 
-If you want raw frames for a node that does not speak compressed transport:
-```bash
-ros2 run image_transport republish compressed in:=/camera/image_compressed raw out:=/camera/image_raw
+## FPS tuning
+
+The first knob to look at is **the Wi-Fi link**, not the camera. The cam logs RSSI on connect and per-2s timing during a stream:
+
+```
+[WiFi] RSSI -33 dBm, BSSID 82:F2:B0:64:62:04, ch 1
+[HTTP] frame 132: grab=11ms send=64ms size=1909B RSSI=-33
 ```
 
-## FPS tuning sequence
+Healthy: `grab` < 30 ms, `send` < 100 ms, RSSI better (closer to 0) than -65 dBm. If `send` is hundreds of milliseconds or more, the cam→AP→PC path is the bottleneck (move closer to router, change channel, swap APs) and no camera tweak will help.
 
-Tune in this order, measuring `ros2 topic hz /camera/image_compressed` after each step.
+Once the link is healthy, edit [src/camera.cpp](src/camera.cpp):
 
-1. **Baseline.** QVGA, quality 12, best-effort QoS, default MTU. Expect 5 to 12 FPS.
-2. **MTU bump.** Confirm `colcon.meta` overrides applied. After editing `colcon.meta`, force the micro-ROS lib to rebuild:
-   ```bash
-   rm -rf cam/.pio/build/esp32cam/libmicroros
-   pio run -d cam
-   ```
-   Confirm the agent log is not fragmenting at 1500 bytes. Expect +20 to 50%.
-3. **Frame size sweep.** Try `FRAMESIZE_HQVGA` (240x176) for higher FPS, or stay at QVGA if already fine. Edit `START_FRAMESIZE` in [src/camera.cpp](src/camera.cpp).
-4. **Quality sweep.** Raise `START_JPEG_Q` from 12 to 15 (smaller frames, more artifacts).
-5. **Wi-Fi link.** AI-Thinker is 2.4 GHz only. Reduce 2.4 GHz interference if FPS is unstable.
-6. **Decision point.** If after these you cannot reach roughly 10 FPS at QVGA, switch to the MJPEG-over-HTTP fallback (see the plan).
+| Knob | Effect | Notes |
+|------|--------|-------|
+| `START_FRAMESIZE` | bigger frame, more pixels | `FRAMESIZE_HQVGA` (240x176, current) is small and fast; `FRAMESIZE_QVGA` (320x240) is the classic balance; `FRAMESIZE_VGA` (640x480) needs a strong link |
+| `START_JPEG_Q`    | lower number = higher quality, larger frames | 12 is sharp, 20 (current) is small/blocky but plenty for teleop |
+| `FB_COUNT`        | extra frame buffers in PSRAM | 2 is fine; more rarely helps |
+
+`FB_COUNT = 2` and `CAMERA_GRAB_LATEST` mean the stream always serves the freshest frame, dropping any backlog automatically.
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
 | `Camera init failed: 0x105` | Wrong board or PSRAM not detected. Confirm `-DBOARD_HAS_PSRAM` in `platformio.ini` and that the AI-Thinker variant is selected. |
-| `JPEG XX B exceeds buffer` log | Lower the framesize or raise the quality number, or bump `JPEG_BUF_CAPACITY` in [src/microros_cam.cpp](src/microros_cam.cpp). |
+| Browser opens `http://marpy-cam.local/` but stream is broken | Check that the camera grab is succeeding (serial: `[HTTP] camera_fb_get failed` means the sensor isn't producing frames). |
+| `marpy-cam.local` doesn't resolve | mDNS isn't working on the network. Use the IP printed on the serial console. On Linux, `avahi-daemon` must be running. |
 | Upload fails | The MB shield should auto-reset. If not, press the RST button on the cam board after the IDE shows "Connecting..." |
-| Agent not found | Verify the agent is running (`docker ps`) and that the cam IP and the PC IP are on the same 2.4 GHz network. |
+| Cam reboots mid-stream | Power supply too weak. The ESP32-CAM peaks well above what a thin USB cable from a hub provides; use a quality cable straight to a wall adapter. |
+| Browser-side stream stutters / 1-2 s RTT to cam although RSSI is good | The Wi-Fi AP probably has client/AP isolation enabled (common on travel routers like GL.iNet). Disable it in the router admin UI, or put the PC and cam on the same physical AP without isolation. |

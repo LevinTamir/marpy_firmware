@@ -6,9 +6,11 @@
 #include "camera_pins.h"
 
 // =================== Config ===========================
-// Tuneable starting point. See cam/README.md for the FPS tuning sequence.
-static const framesize_t START_FRAMESIZE  = FRAMESIZE_QVGA;  // 320x240
-static const int         START_JPEG_Q     = 12;              // lower = better, larger
+// Tuneable starting point. See cam/README.md for the FPS tuning notes.
+// HQVGA + q=20 is small (~2 KB/frame) so it tolerates a mediocre Wi-Fi link.
+// Bump framesize to QVGA and quality down to 12 once the link is solid.
+static const framesize_t START_FRAMESIZE  = FRAMESIZE_HQVGA; // 240x176
+static const int         START_JPEG_Q     = 20;              // higher = smaller, more artifacts
 static const size_t      FB_COUNT         = 2;
 
 // =================== Public API =======================

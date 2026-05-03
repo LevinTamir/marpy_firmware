@@ -1,36 +1,57 @@
-# MARPY Firmware
+# MARPY Base Firmware
 
-Micro-ROS firmware for the [MARPY](https://github.com/LevinTamir/MARPY) project. Two independent PlatformIO projects, one per MCU, sharing a Wi-Fi micro-ROS agent on the PC.
+ESP32 (esp32dev) drive-controller firmware for the [MARPY](https://github.com/LevinTamir/MARPY) project. Subscribes to `/cmd_vel` and publishes `/joint_states` and `/imu` over Wi-Fi via micro-ROS.
 
-| Subfolder | MCU | Role |
-|-----------|-----|------|
-| [base/](base) | ESP32 (esp32dev) | drive controller: `/cmd_vel` in, `/joint_states` and `/imu` out |
-| [cam/](cam)   | AI-Thinker ESP32-CAM (OV2640) | vision: `/camera/image_compressed` out (JPEG) |
+The vision firmware (ESP32-CAM, MJPEG over HTTP) lives in a separate repo: [LevinTamir/marpy_cam_firmware](https://github.com/LevinTamir/marpy_cam_firmware).
 
-Each subfolder is its own PlatformIO project with its own `platformio.ini`, so builds and flashes are independent:
+## Topics
+
+| Topic | Type | Direction |
+|-------|------|-----------|
+| `/cmd_vel`      | `geometry_msgs/Twist`            | PC -> ESP32 |
+| `/pid_gains`    | `std_msgs/Float32MultiArray`     | PC -> ESP32 (live PID tune: `[Kp, Ki, Kd]`) |
+| `/joint_states` | `sensor_msgs/JointState`         | ESP32 -> PC |
+| `/imu`          | `sensor_msgs/Imu`                | ESP32 -> PC |
+
+Node name is `marpy`.
+
+## Code layout
+
+| File | Description |
+|------|-------------|
+| `include/pins.h`           | GPIO config |
+| `include/motor_config.h`   | PID gain defaults |
+| `include/pid.h` / `src/pid.cpp`           | generic PID controller |
+| `include/motors.h` / `src/motors.cpp`     | PWM, encoders, kinematics |
+| `include/imu.h` / `src/imu.cpp`           | MPU6050 driver |
+| `include/microros.h` / `src/microros.cpp` | Wi-Fi, pubs/subs, callbacks |
+| `src/main.cpp`             | `setup()` + `loop()` orchestration |
+
+## Configure Wi-Fi
 
 ```bash
-pio run -d base -t upload
-pio run -d cam  -t upload
+cp include/wifi_config.h.example include/wifi_config.h
 ```
 
-See each subfolder's README for code layout, flashing notes, and troubleshooting:
+Edit `include/wifi_config.h` with your SSID, password, and PC IP. The file is gitignored.
 
-- [base/README.md](base/README.md): drive-controller overview, topics, build/flash.
-- [cam/README.md](cam/README.md): vision firmware, FPS tuning sequence, fallback plan.
+The full guide (with shell snippets to find your SSID and IP) is in the workspace repo: [docs/firmware-setup.md](https://github.com/LevinTamir/MARPY/blob/main/docs/firmware-setup.md).
 
-The end-to-end setup guide (Wi-Fi config, agent setup on the PC, ROS2 launch) lives in the workspace repo:
-
-**[MARPY - Firmware Setup Guide](https://github.com/LevinTamir/MARPY/blob/main/docs/firmware-setup.md)**
-
-## VS Code env var
-
-`.vscode/settings.json` references `${env:MARPY_WS}` for the ROS2 workspace install path. Point it at wherever you cloned the [MARPY workspace](https://github.com/LevinTamir/MARPY) and export it from your shell rc so the Python analysis paths resolve:
+## Build and flash
 
 ```bash
-export MARPY_WS=/path/to/your/marpy_ws
+pio run               # build
+pio run -t upload     # build + flash
+pio device monitor    # serial console
 ```
 
-## License
+Or in VS Code with the PlatformIO extension: open this folder and use the Build / Upload / Monitor buttons in the PlatformIO toolbar.
 
-MIT
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| Upload fails | Hold the **BOOT** button while uploading |
+| WiFi won't connect | Check SSID/password, ensure 2.4 GHz (ESP32 does not support 5 GHz) |
+| Agent not found | Verify PC IP, check firewall (`sudo ufw allow 8888/udp`) |
+| Motors do not spin | Re-check the wiring guide. Usually a swapped IN1/IN2, missing common ground, or ENA/ENB jumpers still in place |

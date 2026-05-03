@@ -6,5 +6,4 @@
 compile_commands.json
 
 # Private network config (contains WiFi credentials)
-base/include/wifi_config.h
-cam/include/wifi_config.h
+include/wifi_config.h

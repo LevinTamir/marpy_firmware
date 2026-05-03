@@ -186,9 +186,12 @@ bool http_server_setup() {
   // Force-evict oldest dead/idle connection when full. Without this, half-
   // closed streaming sockets pile up and the cam stops accepting new GETs.
   config.lru_purge_enable = true;
-  config.max_open_sockets = 4;
-  config.send_wait_timeout = 5;
-  config.recv_wait_timeout = 5;
+  // 7 is the practical IDF httpd ceiling with default LWIP (CONFIG_LWIP_MAX_SOCKETS=10
+  // minus a few reserved). Larger pool plus shorter waits = faster recovery
+  // when a client dies mid-stream.
+  config.max_open_sockets = 7;
+  config.send_wait_timeout = 2;
+  config.recv_wait_timeout = 2;
 
   if (httpd_start(&s_index_httpd, &config) != ESP_OK) {
     Serial.println("[HTTP] index httpd_start failed");
